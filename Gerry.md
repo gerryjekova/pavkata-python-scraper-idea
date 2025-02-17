@@ -118,3 +118,46 @@ result = await scraper.scrape(
     headers={'User-Agent': 'Custom UA'},
     timeout=30
 )
+
+Project structure after Technical Req:
+```
+scraper_api/
+├── app/
+│   ├── __init__.py
+│   ├── main.py
+│   ├── config.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── logging.py
+│   │   └── settings.py
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── router.py
+│   │   └── endpoints/
+│   │       ├── __init__.py
+│   │       └── scraping.py
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── domain.py
+│   │   ├── scraping.py
+│   │   └── task.py
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── crawler.py
+│   │   ├── queue.py
+│   │   └── storage.py
+│   └── utils/
+│       ├── __init__.py
+│       └── helpers.py
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py
+│   ├── test_api/
+│   ├── test_crawler/
+│   └── test_queue/
+├── alembic/
+│   └── versions/
+├── pyproject.toml
+├── requirements.txt
+└── README.md
+```
