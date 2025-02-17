@@ -59,3 +59,62 @@ project/
     └── domains/
         └── .gitkeep
 ```
+
+# 3 implementation 
+This implementation includes:
+
+POST /scrape
+
+Accepts URL and optional parameters (headers, timeout)
+Returns a task ID and initial status
+Validates input and handles errors
+Returns 202 Accepted status code
+GET /scrape/{task_id}
+
+Returns task status and results
+Includes error handling
+Returns appropriate HTTP status codes
+Provides detailed task information
+Additional features:
+
+Proper error handling and logging
+Input validation
+Structured response models
+Clear status tracking
+Optional parameter support
+Would you like me to:
+
+Add request rate limiting?
+Implement authentication?
+Add more optional parameters?
+Show example API usage?
+Let me know what aspect you'd like to focus on next!
+
+To use this system:
+
+Start the Redis server:
+bash
+redis-server
+Start Celery workers:
+bash
+celery -A main.celery worker --loglevel=info
+Start the Flask application:
+bash
+python main.py
+
+
+The scraper can be used in two ways:
+
+With Crawl4AI (recommended):
+Python
+scraper = Scraper(crawl4ai_client=crawl4ai_instance)
+result = await scraper.scrape(url, schema)
+Direct scraping:
+Python
+scraper = Scraper()
+result = await scraper.scrape(
+    url,
+    schema,
+    headers={'User-Agent': 'Custom UA'},
+    timeout=30
+)

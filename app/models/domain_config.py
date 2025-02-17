@@ -1,61 +1,68 @@
 from dataclasses import dataclass
-from typing import Dict, Optional, List, Any
-from datetime import datetime
+from typing import Dict, List, Optional
+from enum import Enum
+
+class SelectorType(Enum):
+    XPATH = "xpath"
+    CSS = "css"
 
 @dataclass
-class SelectorRules:
-    title: str  # XPath or CSS selector
-    content: str
-    author: Optional[str]
-    publish_date: Optional[str]
-    language: Optional[str]
-    categories: Optional[str]
-    media: Dict[str, str]  # Selectors for images, videos, embeds
+class ExtractionRule:
+    selector: str
+    selector_type: SelectorType
+    attribute: Optional[str] = None
+    post_process: Optional[str] = None
+
+@dataclass
+class MediaExtraction:
+    images: ExtractionRule
+    videos: ExtractionRule
+    embeds: ExtractionRule
 
 @dataclass
 class DomainConfig:
     domain: str
-    selectors: SelectorRules
     use_headless: bool = False
     use_proxy: bool = False
     timeout: int = 30
     user_agent: Optional[str] = None
-    proxy_config: Optional[Dict[str, Any]] = None
-    last_updated: datetime = datetime.utcnow()
-    success_rate: float = 1.0  # Track success rate for monitoring
-
+    proxy_config: Optional[Dict] = None
+    retry_count: int = 3
+    extraction_rules: Dict[str, ExtractionRule]
+    media_rules: MediaExtraction
+    
     def to_dict(self) -> dict:
         return {
             "domain": self.domain,
-            "selectors": {
-                "title": self.selectors.title,
-                "content": self.selectors.content,
-                "author": self.selectors.author,
-                "publish_date": self.selectors.publish_date,
-                "language": self.selectors.language,
-                "categories": self.selectors.categories,
-                "media": self.selectors.media
-            },
             "use_headless": self.use_headless,
             "use_proxy": self.use_proxy,
             "timeout": self.timeout,
             "user_agent": self.user_agent,
             "proxy_config": self.proxy_config,
-            "last_updated": self.last_updated.isoformat(),
-            "success_rate": self.success_rate
+            "retry_count": self.retry_count,
+            "extraction_rules": {
+                k: {
+                    "selector": v.selector,
+                    "selector_type": v.selector_type.value,
+                    "attribute": v.attribute,
+                    "post_process": v.post_process
+                } for k, v in self.extraction_rules.items()
+            },
+            "media_rules": {
+                "images": {
+                    "selector": self.media_rules.images.selector,
+                    "selector_type": self.media_rules.images.selector_type.value,
+                    "attribute": self.media_rules.images.attribute
+                },
+                "videos": {
+                    "selector": self.media_rules.videos.selector,
+                    "selector_type": self.media_rules.videos.selector_type.value,
+                    "attribute": self.media_rules.videos.attribute
+                },
+                "embeds": {
+                    "selector": self.media_rules.embeds.selector,
+                    "selector_type": self.media_rules.embeds.selector_type.value,
+                    "attribute": self.media_rules.embeds.attribute
+                }
+            }
         }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> 'DomainConfig':
-        selectors = SelectorRules(**data["selectors"])
-        return cls(
-            domain=data["domain"],
-            selectors=selectors,
-            use_headless=data.get("use_headless", False),
-            use_proxy=data.get("use_proxy", False),
-            timeout=data.get("timeout", 30),
-            user_agent=data.get("user_agent"),
-            proxy_config=data.get("proxy_config"),
-            last_updated=datetime.fromisoformat(data["last_updated"]),
-            success_rate=data.get("success_rate", 1.0)
-        )

@@ -1,30 +1,26 @@
 from flask import Flask, request, jsonify
-from app.queue_manager import TaskManager
-from app.models import TaskStatus, TaskResponse
-from datetime import datetime
-import uuid
-from typing import Optional
 import logging
-
-app = Flask(__name__)
-task_manager = TaskManager()
+from app.queue.task_manager import TaskManager
+from config import Config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+task_manager = TaskManager(Config.REDIS_URL, Config.CRAWL4AI_CLIENT)
 
 @app.route('/scrape', methods=['POST'])
 def create_scraping_task():
     """
     Create a new scraping task
     
-    Expected JSON payload:
+    Expected payload:
     {
-        "url": "https://example.com/article",
-        "headers": {                    # Optional
-            "User-Agent": "Custom UA"
-        },
-        "timeout": 30                   # Optional
+        "url": "https://example.com",
+        "headers": {                # Optional
+            "User-Agent": "Custom"
+        }
     }
     """
     try:
@@ -37,30 +33,16 @@ def create_scraping_task():
         if not url:
             return jsonify({"error": "URL is required"}), 400
         
-        # Extract optional parameters
-        custom_headers = data.get('headers', {})
-        timeout = data.get('timeout', 30)
+        # Create task
+        headers = data.get('headers')
+        task_id = task_manager.create_task(url, headers)
         
-        # Generate task ID
-        task_id = str(uuid.uuid4())
+        return jsonify({
+            "task_id": task_id,
+            "status": "queued",
+            "message": "Task created successfully"
+        }), 202
         
-        # Create task with parameters
-        task_manager.create_task(
-            task_id=task_id,
-            url=url,
-            headers=custom_headers,
-            timeout=timeout
-        )
-        
-        # Create response
-        response = TaskResponse(
-            task_id=task_id,
-            status=TaskStatus.QUEUED,
-            created_at=datetime.utcnow()
-        )
-        
-        return jsonify(response.to_dict()), 202
-
     except Exception as e:
         logger.error(f"Error creating task: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
@@ -68,45 +50,37 @@ def create_scraping_task():
 @app.route('/scrape/<task_id>', methods=['GET'])
 def get_scraping_result(task_id: str):
     """
-    Get the result of a scraping task
-    
-    Parameters:
-        task_id: UUID of the task to check
+    Get the status and result of a scraping task
     """
     try:
-        # Validate task_id format
-        try:
-            uuid.UUID(task_id)
-        except ValueError:
-            return jsonify({"error": "Invalid task ID format"}), 400
+        task_data = task_manager.get_task(task_id)
         
-        # Get task result
-        result = task_manager.get_result(task_id)
-        
-        if result is None:
+        if not task_data:
             return jsonify({
                 "error": "Task not found",
                 "task_id": task_id
             }), 404
         
-        return jsonify(result.to_dict()), 200
-
+        response = {
+            "task_id": task_id,
+            "status": task_data['status'],
+            "created_at": task_data['created_at'],
+            "updated_at": task_data['updated_at']
+        }
+        
+        if 'completed_at' in task_data:
+            response['completed_at'] = task_data['completed_at']
+        
+        if task_data['status'] == 'completed':
+            response['result'] = task_data['result']
+        elif task_data['status'] == 'failed':
+            response['error'] = task_data['error']
+        
+        return jsonify(response), 200
+        
     except Exception as e:
         logger.error(f"Error fetching task result: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
-
-# Error Handlers
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({"error": "Resource not found"}), 404
-
-@app.errorhandler(405)
-def method_not_allowed(error):
-    return jsonify({"error": "Method not allowed"}), 405
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
