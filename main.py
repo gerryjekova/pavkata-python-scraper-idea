@@ -23,7 +23,7 @@ def get_result(task_id):
         return jsonify({
             'status': 'not_found'
         }), 404
-    
+     
     return jsonify(result)
 
 if __name__ == '__main__':
