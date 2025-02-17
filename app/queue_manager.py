@@ -1,70 +1,74 @@
+import logging
 from celery import Celery
 from config import Config
-from .models import TaskResponse, TaskStatus, ScrapedContent
-from .schema_generator import SchemaGenerator
-from .scraper import Scraper
+from .models.task_response import TaskResponse, TaskStatus
+from .scrapers.schema_generator import SchemaGenerator
+from .scrapers.content_scraper import ContentScraper
 from datetime import datetime
-from typing import Optional, Dict, Any
+from crawl4ai import Crawler
+
+logger = logging.getLogger(__name__)
 
 celery_app = Celery('scraper', broker=Config.REDIS_URL)
 
 class TaskManager:
     def __init__(self):
-        self.schema_generator = SchemaGenerator()
-        self.scraper = Scraper()
-        self.tasks = {}  # In-memory storage (replace with Redis in production)
+        self.crawler = Crawler(api_key=Config.CRAWL4AI_API_KEY)
+        self.schema_generator = SchemaGenerator(Config.RULES_DIR, self.crawler)
+        self.content_scraper = ContentScraper()
+        self.tasks = {}
     
-    def create_task(self, task_id: str, url: str, headers: Optional[Dict] = None, 
-                   timeout: int = 30) -> None:
-        """Create a new scraping task"""
-        # Initialize task in storage
-        self.tasks[task_id] = TaskResponse(
-            task_id=task_id,
-            status=TaskStatus.QUEUED,
-            created_at=datetime.utcnow()
-        )
-        
-        # Queue the task
-        self.process_task.delay(task_id, url, headers, timeout)
-    
-    def get_result(self, task_id: str) -> Optional[TaskResponse]:
-        """Get the result of a task"""
-        return self.tasks.get(task_id)
-    
-    @celery_app.task(bind=True, max_retries=Config.MAX_RETRIES)
-    def process_task(self, task_id: str, url: str, headers: Optional[Dict], 
-                    timeout: int) -> None:
-        """Process a scraping task"""
+    @celery_app.task(bind=True, max_retries=3)
+    def process_task(self, task_id: str, url: str, headers: dict = None, 
+                    timeout: int = 30) -> None:
+        """Process a scraping task with retries and failsafe mechanisms"""
         try:
             # Update task status
-            self.tasks[task_id].status = TaskStatus.PROCESSING
+            self._update_task_status(task_id, TaskStatus.PROCESSING)
             
-            # Try to load existing schema
-            schema = self.schema_generator.load_schema(url)
+            # Get or generate config
+            config = self.schema_generator.load_config(url)
+            if not config:
+                config = await self.schema_generator.generate_config(url)
             
-            if not schema:
-                schema = self.schema_generator.generate_schema(url)
+            # Update config with request-specific settings
+            if headers:
+                config.user_agent = headers.get('User-Agent', config.user_agent)
+            config.timeout = timeout
             
-            # Attempt to scrape with the schema
-            result = self.scraper.scrape(url, schema, headers, timeout)
-            
-            # Update task with success result
+            # Attempt scraping
+            try:
+                result = self.content_scraper.scrape(url, config)
+                self._update_task_success(task_id, result)
+                
+            except Exception as scrape_error:
+                logger.error(f"Initial scraping failed: {str(scrape_error)}")
+                
+                # Regenerate config and retry
+                config = await self.schema_generator.generate_config(url)
+                result = self.content_scraper.scrape(url, config)
+                self._update_task_success(task_id, result)
+                
+        except Exception as e:
+            logger.error(f"Task processing failed: {str(e)}")
+            self._update_task_failure(task_id, str(e))
+            raise self.retry(countdown=60)
+    
+    def _update_task_status(self, task_id: str, status: TaskStatus) -> None:
+        """Update task status"""
+        if task_id in self.tasks:
+            self.tasks[task_id].status = status
+    
+    def _update_task_success(self, task_id: str, result: dict) -> None:
+        """Update task with successful result"""
+        if task_id in self.tasks:
             self.tasks[task_id].status = TaskStatus.COMPLETED
             self.tasks[task_id].completed_at = datetime.utcnow()
             self.tasks[task_id].result = result
-            
-        except Exception as e:
-            # If scraping fails, try regenerating schema
-            try:
-                schema = self.schema_generator.generate_schema(url)
-                result = self.scraper.scrape(url, schema, headers, timeout)
-                
-                self.tasks[task_id].status = TaskStatus.COMPLETED
-                self.tasks[task_id].completed_at = datetime.utcnow()
-                self.tasks[task_id].result = result
-                
-            except Exception as retry_e:
-                self.tasks[task_id].status = TaskStatus.FAILED
-                self.tasks[task_id].error = str(retry_e)
-                self.tasks[task_id].completed_at = datetime.utcnow()
-                raise self.retry(countdown=Config.RETRY_DELAY)
+    
+    def _update_task_failure(self, task_id: str, error: str) -> None:
+        """Update task with failure information"""
+        if task_id in self.tasks:
+            self.tasks[task_id].status = TaskStatus.FAILED
+            self.tasks[task_id].completed_at = datetime.utcnow()
+            self.tasks[task_id].error = error
