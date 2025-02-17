@@ -1,24 +1,55 @@
-from fastapi import FastAPI
-from .services.queue_manager import QueueManager
-from .models.task_response import TaskResponse
-from typing import Dict
+from fastapi import FastAPI, HTTPException
+import redis
+from datetime import datetime
 
 app = FastAPI()
-queue_manager = QueueManager()
+
+# Initialize Redis client
+redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 
 @app.get("/")
 async def root():
-    return {"status": "running", "message": "Web Scraper API"}
+    return {
+        "status": "running",
+        "timestamp": datetime.utcnow().isoformat(),
+        "user": "gerryjekova"
+    }
 
-@app.post("/scrape")
-async def scrape_url(url: str, headers: Dict[str, str] = None) -> TaskResponse:
-    task_id = queue_manager.create_task(url, headers)
-    return queue_manager.get_task_status(task_id)
-
-@app.get("/task/{task_id}")
-async def get_task(task_id: str) -> TaskResponse:
-    return queue_manager.get_task_status(task_id)
+@app.get("/redis-test")
+async def test_redis():
+    try:
+        # Test Redis connection
+        redis_client.ping()
+        
+        # Set a test value
+        test_key = "test_timestamp"
+        test_value = datetime.utcnow().isoformat()
+        redis_client.set(test_key, test_value)
+        
+        # Get the value back
+        retrieved_value = redis_client.get(test_key)
+        
+        return {
+            "status": "success",
+            "redis_connected": True,
+            "test_value_set": test_value,
+            "test_value_retrieved": retrieved_value
+        }
+    except redis.ConnectionError as e:
+        raise HTTPException(status_code=500, detail=f"Redis connection failed: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    redis_status = "connected"
+    try:
+        redis_client.ping()
+    except:
+        redis_status = "disconnected"
+    
+    return {
+        "status": "healthy",
+        "redis_status": redis_status,
+        "timestamp": datetime.utcnow().isoformat()
+    }
